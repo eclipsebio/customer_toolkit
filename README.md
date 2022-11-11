@@ -1,2 +1,2 @@
-# customer_toolkit
-Eclipsebio customer toolkit
+# Eclipsebio Customer Toolkit
+Tools for handling data from Eclipsebio products
