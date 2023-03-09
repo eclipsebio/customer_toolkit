@@ -189,7 +189,7 @@ if __name__ == "__main__":
         print("Please provide a 6 column bed")
         exit()
     
-    if (args.scaling != None) and (args.scaling in ['IQR','Min-Max']):
+    if (args.scaling != None) and (args.scaling not in ['IQR','Min-Max']):
         print('Options for scaling are: IQR or Min-Max')
         exit()
     
