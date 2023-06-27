@@ -35,7 +35,7 @@ def Min_Max_scaling(series):
     scaled = round((series - min_point)/scaling,4)
     return scaled
 
-def output_map(df_bg,dfbed,scaling,gene_name):
+def output_map(df_bg,dfbed,scaling,gene_name,output_folder):
     """subset bedgraph for region of interest and scale"""
     
     exon_subsets = list() 
@@ -48,12 +48,12 @@ def output_map(df_bg,dfbed,scaling,gene_name):
     
     dfbed.loc[:,'length'] = dfbed['stop'] - dfbed['start']
     total_length = dfbed['length'].sum()
+    print(f'Total length in bed file is {total_length}')
     
     chrom = dfbed['chr'].unique()[0]
+    strand = dfbed['strand'].unique()[0]
     
     df_chrom = df_bg[df_bg['chr'] == chrom]
-    
-    dfbed.loc[:,"length"] = dfbed["stop"]-dfbed["start"]
     
     #Better to do the merge after the scalings to input the -999
     for i,exon in dfbed.iterrows():
@@ -67,6 +67,8 @@ def output_map(df_bg,dfbed,scaling,gene_name):
     
     #Reactivities for all exons, concatenated as rows
     region_map = pd.concat(exon_subsets,axis=0)
+    print(region_map.head())
+    print(len(exon_subsets))
     
     if scaling == 'IQR':
         region_map.loc[:,'scaled'] = IQR_scaling(region_map['mean'].astype(float))
@@ -82,27 +84,40 @@ def output_map(df_bg,dfbed,scaling,gene_name):
     region_map_filled.loc[:,'start'] = region_map_filled.loc[:,'start'].astype(int)
     region_map_filled.loc[:,'stop'] = region_map_filled.loc[:,'stop'].astype(int) 
     positions = list(range(1,total_length+1))
+    
     region_map_filled.loc[:,'1-based'] = positions
-                           
+    
+    print(region_map_filled.shape[0])
+    print(total_length)
     if region_map_filled.shape[0] != total_length:
         print(f'Selected dataframe doesnt equal region length of {total_length}; DF Shape is {region_map.shape[0]}')  
     
     region_map_filled.loc[:,'chr'] = [chrom]*total_length  
     
     if scaling:
+        col = 'scaled' #whats the name of the reactivities
         shape_cols= ['1-based','scaled']
         map_cols = ['chr','start','stop','mean','scaled']
-        out_map = f'{gene_name}_{scaling}.map'
+        out_map = os.path.join(output_folder,f'{gene_name}_{scaling}.map')
     else:
+        col = 'mean' 
         shape_cols = ['1-based','mean']
         map_cols = ['chr','start','stop','mean']
-        out_map = f'{gene_name}.map'
+        out_map = os.path.join(output_folder,f'{gene_name}.map')
         
     df_shape = region_map_filled[shape_cols]                 
-    region_map_filled[map_cols].to_csv(out_map,sep="\t",index = None)
+    #region_map_filled[map_cols].to_csv(out_map,sep="\t",index = None)
+    
+    #Save .shape file
+    if strand == '-':
+        print('Strand is negative ... flipping reactivities')
+        tmp = list(df_shape[col])[::-1]
+        df_shape.loc[:,col] = tmp
+                     
     df_shape.to_csv(out_map.replace('map','shape'),header = None, sep="\t",index=None)
     
-    forna_reactivity_gradient(df_shape,f'{gene_name}_forna_colors.txt')
+    forna_colors_filename = os.path.join(output_folder, f'{gene_name}_forna_colors.txt')
+    forna_reactivity_gradient(df_shape,forna_colors_filename)
     
     print('Finished')
                      
@@ -115,20 +130,25 @@ def read_bedgraph(bedgraph):
     
     return df
 
-def intersect_fasta(reference,bed):
-    gene = bed.replace('.6.bed','').replace('.bed','')
-    fasta_output = gene +".fasta"
+def intersect_fasta(reference,bed,output_folder,strand):
+    gene = os.path.basename(bed).replace('.6.bed','').replace('.bed','')
+    fasta_output = os.path.join(output_folder,gene +".fasta")
     tmp_fasta = fasta_output.replace('.fasta','.tmp')
-    cmd = f'bedtools getfasta -fi {reference} -bed {bed} -fo {tmp_fasta}'
+    cmd = f'bedtools getfasta -fi {reference} -bed {bed} -fo {tmp_fasta} -s -rna -split'
     sp.call(cmd , shell = True)
     
     ## Get intersected sequence to format accepted by algorithms
     out = open(fasta_output, 'w')
     out.write(f'>{gene}\n')
     with open(tmp_fasta) as t:
-        for line in t.readlines():
+        if strand == '-':
+            print('Gene is negative stranded')
+            block = t.readlines()[::-1]
+        else:
+            block = t.readlines()
+        for line in block:
             if not line.startswith('>'):
-                out.write(line.strip().replace('T','U'))
+                out.write(line.strip().replace('T','U').replace('t','u'))
     out.close()
     os.remove(tmp_fasta)
     
@@ -144,8 +164,8 @@ def forna_reactivity_gradient(df_shape,output):
     
     df_forna.loc[:,"na"] = df_forna.loc[:,reactivity_column].replace(-999,np.nan)
 
-    r_min = df_forna['na'].min(skipna=True).round(4)
-    r_max = df_forna['na'].max(skipna=True).round(4)
+    r_min = round(df_forna['na'].min(skipna=True),4)
+    r_max = round(df_forna['na'].max(skipna=True),4)
     
     #Write forna_colors.txt
     out.write("range=aqua:red\n")
@@ -165,6 +185,7 @@ if __name__ == "__main__":
     parser.add_argument('--bedgraph',help = 'Stranded bedgraph file',required=True)
     parser.add_argument('--fasta', help = 'Reference fasta to extract sequence from (optional)',default=None)
     parser.add_argument('--scaling', help='Scaling options: "IQR" or "Min-Max"; Otherwise outputs raw reactivities')
+    parser.add_argument('--output_folder', default='.',help='Output folder for files.')
     args=parser.parse_args()
     
     strand_to_str = {'pos':'+','neg':'-'}
@@ -172,15 +193,22 @@ if __name__ == "__main__":
     
     print(f'Analyzing target: {target}')
     
+    if not os.path.exists(args.output_folder):
+        print(f'{args.output_folder} does not exist. Creating..')
+        os.mkdir(args.output_folder)
+    
     #check that the bedgraph ends in bedgraph
     basename = args.bedgraph.replace(".bedgraph","")
     strand = basename.split("_")[-1] #this will say pos and neg
                         
     #Check that strand information matches bed information
     dfbed,strandbed = read_bed(args.bed)
+    print(f'Bed strand is {strandbed}')
     
+    #Validate +/- of bed with +/- in filename of the bedgraph.
     if strandbed == strand:
         pass
+    #Validate +/- of bed with pos/neg string in filename of the bedgraph.
     elif strandbed != strand_to_str[strand]:
         print("Bed file strand does not match bedgraph strand, please provide correct bedgraph")
         exit()
@@ -203,6 +231,6 @@ if __name__ == "__main__":
 
     ## Subset the sequence in the bed region from a reference.
     if args.fasta:
-        intersect_fasta(args.fasta,args.bed)
+        intersect_fasta(args.fasta,args.bed,args.output_folder,strandbed)
     
-    output_map(df_bedgraph,dfbed,args.scaling,target)
+    output_map(df_bedgraph,dfbed,args.scaling,target,args.output_folder)
