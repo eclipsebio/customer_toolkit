@@ -204,6 +204,13 @@ if __name__ == "__main__":
     #Check that strand information matches bed information
     dfbed,strandbed = read_bed(args.bed)
     print(f'Bed strand is {strandbed}')
+
+    # Check the uniqueness of the strand and chromosome in the bed file
+    if len(dfbed['strand'].unique()) > 1:
+        raise ValueError('Bed File may only contain regions from 1 strand.')
+
+    if len(dfbed['chr'].unique()) > 1:
+        raise ValueError('Bed File may only contain regions from 1 chromosome.')
     
     #Validate +/- of bed with +/- in filename of the bedgraph.
     if strandbed == strand:
