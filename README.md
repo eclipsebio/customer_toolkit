@@ -24,3 +24,6 @@ Where the following are provided as inputs
 * OUTPUT (optional): output folder for generated files, defaults to the current directory
 
 The output files end with .shape, .fa, and .map and these files can be used as inputs to a variety of RNA folding algorithms.
+
+## License
+This repository is released under the [MIT License](LICENSE).
